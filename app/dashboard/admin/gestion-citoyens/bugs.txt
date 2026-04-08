@@ -1,0 +1,1557 @@
+
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, UpdateDateColumn, ManyToOne, JoinColumn, OneToMany } from 'typeorm';
+import { ServiceRequest } from './service-request.entity';
+import { User } from '../../users/entities/user.entity';
+import { TreatmentDocument } from './treatment-document.entity';
+
+export enum TraitementEtat {
+  EN_COURS = 'en_cours',
+  TERMINE = 'termine',
+  SUSPENDU = 'suspendu',
+  ANNULE = 'annule'
+}
+
+export enum TraitementResultat {
+  EN_ATTENTE = 'en_attente',
+  VALIDEE = 'validee',
+  REFUSEE = 'refusee',
+  INCOMPLETE = 'incomplete', // Demande incomplète, documents manquants
+  REPORTEE = 'reportee' // Report pour complément d'information
+}
+
+@Entity('treatments')
+export class Treatment {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  // Numéro de traitement unique
+  @Column({ unique: true })
+  numeroTraitement: string;
+
+  @Column({
+    type: 'enum',
+    enum: TraitementEtat,
+    default: TraitementEtat.EN_COURS
+  })
+  etat: TraitementEtat;
+
+  @Column({
+    type: 'enum',
+    enum: TraitementResultat,
+    default: TraitementResultat.EN_ATTENTE
+  })
+  resultat: TraitementResultat;
+
+  // Étape du workflow (si applicable)
+  @Column({ nullable: true })
+  etapeWorkflow: string;
+
+  // Commentaires internes (non visibles par le demandeur)
+  @Column('text', { nullable: true })
+  commentairesInternes: string;
+
+  // Commentaires publics (visibles par le demandeur)
+  @Column('text', { nullable: true })
+  commentairesPublics: string;
+
+  // Dates de traitement
+  @Column({ nullable: true })
+  dateDebut: Date;
+
+  @Column({ nullable: true })
+  dateFin: Date;
+
+  @Column({ nullable: true })
+  dateEcheance: Date; // Date limite pour cette étape
+
+  // Agent assigné (informations dénormalisées pour l'historique)
+  @Column()
+  agentNom: string;
+
+  @Column()
+  agentPrenom: string;
+
+  @Column()
+  agentEmail: string;
+
+  @Column({ nullable: true })
+  agentService: string; // Service/département de l'agent
+
+  // Message pour le demandeur
+  @Column('text', { nullable: true })
+  messageAgent: string;
+
+  // Flags de notification
+  @Column({ default: false })
+  notifyByEmail: boolean;
+
+  @Column({ default: false })
+  notifyBySms: boolean;
+
+  // Pièces jointes spécifiques à ce traitement
+  @Column('simple-array', { nullable: true })
+  documentsRequis: string[]; // Documents additionnels requis
+
+  // SUPPRIMÉ: actionsLog n'est plus nécessaire
+
+  // Temps estimé et réel de traitement (en heures)
+  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
+  tempsEstime: number;
+
+  @Column({ type: 'decimal', precision: 5, scale: 2, nullable: true })
+  tempsReel: number;
+
+  // Relations
+  @ManyToOne(() => ServiceRequest, serviceRequest => serviceRequest.traitements, { 
+    nullable: false,
+    onDelete: 'CASCADE'
+  })
+  @JoinColumn({ name: 'demande_id' })
+  demande: ServiceRequest;
+
+  @Column({ nullable: false })
+  demande_id: string;
+
+  @ManyToOne(() => User, { nullable: false })
+  @JoinColumn({ name: 'agent_id' })
+  agent: User;
+
+  @Column({ nullable: false })
+  agent_id: string;
+
+  // Documents générés par l'agent pour le demandeur
+  @OneToMany(() => TreatmentDocument, doc => doc.treatment, { cascade: true })
+  documentsGeneres: TreatmentDocument[];
+
+  @CreateDateColumn()
+  createdAt: Date;
+
+  @UpdateDateColumn()
+  updatedAt: Date;
+
+  // Méthodes utilitaires
+  calculateProcessingTime(): number {
+    if (!this.dateDebut || !this.dateFin) return 0;
+    return (this.dateFin.getTime() - this.dateDebut.getTime()) / (1000 * 60 * 60); // en heures
+  }
+
+  isOverdue(): boolean {
+    if (!this.dateEcheance) return false;
+    return new Date() > this.dateEcheance && this.etat === TraitementEtat.EN_COURS;
+  }
+
+  // SUPPRIMÉ: addActionLog() n'est plus nécessaire
+}
+
+import { Entity, PrimaryGeneratedColumn, Column, ManyToOne, JoinColumn, CreateDateColumn } from 'typeorm';
+import { Treatment } from './treatment.entity';
+
+@Entity('treatment_documents')
+export class TreatmentDocument {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column()
+  type: string;
+
+  @Column()
+  nom: string;
+
+  @Column('text', { nullable: true })
+  description: string;
+
+  @Column()
+  url: string;
+
+  @Column()
+  originalName: string;
+
+  @Column()
+  mimeType: string;
+
+  @Column()
+  size: number;
+
+  @ManyToOne(() => Treatment, treatment => treatment.documentsGeneres)
+  @JoinColumn({ name: 'treatment_id' })
+  treatment: Treatment;
+
+  @Column()
+  treatment_id: string;
+
+  @CreateDateColumn()
+  createdAt: Date;
+}
+
+
+import { IsString, IsEmail, IsOptional, IsDateString, IsNumber, IsArray, IsBoolean } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+
+export class CreateTreatmentDto {
+  @ApiProperty()
+  @IsString()
+  demandeId: string;
+
+  @ApiProperty()
+  @IsString()
+  agentNom: string;
+
+  @ApiProperty()
+  @IsString()
+  agentPrenom: string;
+
+  @ApiProperty()
+  @IsEmail()
+  agentEmail: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  agentService?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  commentairesInternes?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  messageAgent?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsDateString()
+  dateEcheance?: string;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  notifyByEmail?: boolean;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  documentsRequis?: string[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
+  tempsEstime?: number;
+}
+
+
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, In, Like } from 'typeorm';
+import { ServiceRequest, DemandeEtat } from './entities/service-request.entity';
+import { Treatment, TraitementEtat, TraitementResultat } from './entities/treatment.entity';
+import { Service } from '../services/entities/service.entity';
+import { ServiceRequestDocument } from './entities/service-request-document.entity';
+import { TreatmentDocument } from './entities/treatment-document.entity';
+import { NotificationsService } from '../notifications/notifications.service';
+import { EmailService } from '../common/services/email.service';
+import { CreateRdvRequestDto } from './dto/create-rdv-request.dto';
+import { CreatePartenariatRequestDto } from './dto/create-partnariat-request.dto';
+import { CreateMariageRequestDto } from './dto/create-mariage-request.dto';
+import { CreateTreatmentDto } from './dto/create-treatment.dto';
+import { UpdateTreatmentDto } from './dto/update-treatment.dto';
+
+
+@Injectable()
+export class ServiceRequestsService {
+  constructor(
+    @InjectRepository(ServiceRequest)
+    private serviceRequestRepository: Repository<ServiceRequest>,
+    @InjectRepository(Treatment)
+    private treatmentRepository: Repository<Treatment>,
+    @InjectRepository(Service)
+    private serviceRepository: Repository<Service>,
+    @InjectRepository(ServiceRequestDocument)
+    private documentRepository: Repository<ServiceRequestDocument>,
+    @InjectRepository(TreatmentDocument)
+    private treatmentDocumentRepository: Repository<TreatmentDocument>,
+    private notificationsService: NotificationsService,
+    private emailService: EmailService,
+  ) {}
+
+  // ==================== CRÉATION DES DEMANDES ====================
+
+  // async createRdvRequest(createRdvRequestDto: CreateRdvRequestDto, userId: string) {
+  //   const service = await this.getServiceByType('rdv');
+  //   const numeroReference = await this.generateReferenceNumber('RDV');
+
+  //   const serviceRequest = this.serviceRequestRepository.create({
+  //     type: 'rdv',
+  //     etat: DemandeEtat.EN_ATTENTE,
+  //     nom: createRdvRequestDto.nom,
+  //     prenom: createRdvRequestDto.prenom,
+  //     email: createRdvRequestDto.email,
+  //     telephone: createRdvRequestDto.telephone,
+  //     demande: createRdvRequestDto,
+  //     numeroReference,
+  //     utilisateur_id: userId,
+  //     service_id: service.id,
+  //     priorite: this.calculatePriority('rdv', createRdvRequestDto),
+  //     dateLimiteTraitement: this.calculateProcessingDeadline('rdv'),
+  //   });
+
+  //   const savedRequest = await this.serviceRequestRepository.save(serviceRequest);
+    
+  //   // Créer une notification
+  //   await this.notificationsService.create({
+  //     userId,
+  //     message: `Votre demande de rendez-vous (${numeroReference}) a été soumise`,
+  //     type: 'info',
+  //     serviceRequestId: savedRequest.id,
+  //   });
+
+  //   // Envoyer email de confirmation
+  //   await this.emailService.sendRequestConfirmation(
+  //     createRdvRequestDto.email,
+  //     'rdv',
+  //     numeroReference
+  //   );
+
+  //   return savedRequest;
+  // }
+
+  // async createPartenariatRequest(createPartenariatRequestDto: CreatePartenariatRequestDto, userId: string) {
+  //   const service = await this.getServiceByType('partenariat');
+  //   const numeroReference = await this.generateReferenceNumber('PAR');
+
+  //   const serviceRequest = this.serviceRequestRepository.create({
+  //     type: 'partenariat',
+  //     etat: DemandeEtat.EN_ATTENTE,
+  //     nom: createPartenariatRequestDto.nom,
+  //     prenom: createPartenariatRequestDto.prenom,
+  //     email: createPartenariatRequestDto.email,
+  //     demande: createPartenariatRequestDto,
+  //     numeroReference,
+  //     utilisateur_id: userId,
+  //     service_id: service.id,
+  //     priorite: this.calculatePriority('partenariat', createPartenariatRequestDto),
+  //     dateLimiteTraitement: this.calculateProcessingDeadline('partenariat'),
+  //   });
+
+  //   const savedRequest = await this.serviceRequestRepository.save(serviceRequest);
+    
+  //   await this.notificationsService.create({
+  //     userId,
+  //     message: `Votre demande de partenariat (${numeroReference}) a été soumise`,
+  //     type: 'info',
+  //     serviceRequestId: savedRequest.id,
+  //   });
+
+  //   await this.emailService.sendRequestConfirmation(
+  //     createPartenariatRequestDto.email,
+  //     'partenariat',
+  //     numeroReference
+  //   );
+
+  //   return savedRequest;
+  // }
+
+  // async createMariageRequest(createMariageRequestDto: CreateMariageRequestDto, userId: string) {
+  //   const service = await this.getServiceByType('mariage');
+  //   const numeroReference = await this.generateReferenceNumber('MAR');
+
+  //   const serviceRequest = this.serviceRequestRepository.create({
+  //     type: 'mariage',
+  //     etat: DemandeEtat.EN_ATTENTE,
+  //     nom: createMariageRequestDto.conjoint1.nom,
+  //     prenom: createMariageRequestDto.conjoint1.prenom,
+  //     email: createMariageRequestDto.conjoint1.email,
+  //     telephone: createMariageRequestDto.conjoint1.phone,
+  //     demande: createMariageRequestDto,
+  //     numeroReference,
+  //     utilisateur_id: userId,
+  //     service_id: service.id,
+  //     priorite: this.calculatePriority('mariage', createMariageRequestDto),
+  //     dateLimiteTraitement: this.calculateProcessingDeadline('mariage'),
+  //   });
+
+  //   const savedRequest = await this.serviceRequestRepository.save(serviceRequest);
+    
+  //   await this.notificationsService.create({
+  //     userId,
+  //     message: `Votre demande de mariage (${numeroReference}) a été soumise`,
+  //     type: 'info',
+  //     serviceRequestId: savedRequest.id,
+  //   });
+
+  //   await this.emailService.sendRequestConfirmation(
+  //     createMariageRequestDto.conjoint1.email,
+  //     'mariage',
+  //     numeroReference
+  //   );
+
+  //   return savedRequest;
+  // }
+async createRdvRequest(createRdvRequestDto: CreateRdvRequestDto, userId: string) {
+  const service = await this.getServiceByType('rdv');
+  const numeroReference = await this.generateReferenceNumber('RDV');
+
+  const serviceRequest = this.serviceRequestRepository.create({
+    type: 'rdv',
+    etat: DemandeEtat.EN_ATTENTE,
+    nom: createRdvRequestDto.nom,
+    prenom: createRdvRequestDto.prenom,
+    email: createRdvRequestDto.email,
+    telephone: createRdvRequestDto.telephone,
+    demande: createRdvRequestDto,
+    numeroReference,
+    utilisateur_id: userId,
+    service_id: service.id,
+    priorite: this.calculatePriority('rdv', createRdvRequestDto),
+    dateLimiteTraitement: this.calculateProcessingDeadline('rdv'),
+  });
+
+  const savedRequest = await this.serviceRequestRepository.save(serviceRequest);
+  
+  // CORRECTION: Passer tous les paramètres requis pour CreateNotificationDto
+  await this.notificationsService.create({
+    userId: userId, // Correction: utiliser userId au lieu de juste userId
+    message: `Votre demande de rendez-vous (${numeroReference}) a été soumise`,
+    type: 'info',
+    serviceRequestId: savedRequest.id, // Correction: utiliser serviceRequestId
+  });
+
+  // Envoyer email de confirmation
+  await this.emailService.sendRequestConfirmation(
+    createRdvRequestDto.email,
+    'rdv',
+    numeroReference
+  );
+
+  return savedRequest;
+}
+
+async createPartenariatRequest(createPartenariatRequestDto: CreatePartenariatRequestDto, userId: string) {
+  const service = await this.getServiceByType('partenariat');
+  const numeroReference = await this.generateReferenceNumber('PAR');
+
+  const serviceRequest = this.serviceRequestRepository.create({
+    type: 'partenariat',
+    etat: DemandeEtat.EN_ATTENTE,
+    nom: createPartenariatRequestDto.nom,
+    prenom: createPartenariatRequestDto.prenom,
+    email: createPartenariatRequestDto.email,
+    demande: createPartenariatRequestDto,
+    numeroReference,
+    utilisateur_id: userId,
+    service_id: service.id,
+    priorite: this.calculatePriority('partenariat', createPartenariatRequestDto),
+    dateLimiteTraitement: this.calculateProcessingDeadline('partenariat'),
+  });
+
+  const savedRequest = await this.serviceRequestRepository.save(serviceRequest);
+  
+  await this.notificationsService.create({
+    userId: userId, // Correction
+    message: `Votre demande de partenariat (${numeroReference}) a été soumise`,
+    type: 'info',
+    serviceRequestId: savedRequest.id, // Correction
+  });
+
+  await this.emailService.sendRequestConfirmation(
+    createPartenariatRequestDto.email,
+    'partenariat',
+    numeroReference
+  );
+
+  return savedRequest;
+}
+
+async createMariageRequest(createMariageRequestDto: CreateMariageRequestDto, userId: string) {
+  const service = await this.getServiceByType('mariage');
+  const numeroReference = await this.generateReferenceNumber('MAR');
+
+  const serviceRequest = this.serviceRequestRepository.create({
+    type: 'mariage',
+    etat: DemandeEtat.EN_ATTENTE,
+    nom: createMariageRequestDto.conjoint1.nom,
+    prenom: createMariageRequestDto.conjoint1.prenom,
+    email: createMariageRequestDto.conjoint1.email,
+    telephone: createMariageRequestDto.conjoint1.phone,
+    demande: createMariageRequestDto,
+    numeroReference,
+    utilisateur_id: userId,
+    service_id: service.id,
+    priorite: this.calculatePriority('mariage', createMariageRequestDto),
+    dateLimiteTraitement: this.calculateProcessingDeadline('mariage'),
+  });
+
+  const savedRequest = await this.serviceRequestRepository.save(serviceRequest);
+  
+  await this.notificationsService.create({
+    userId: userId, // Correction
+    message: `Votre demande de mariage (${numeroReference}) a été soumise`,
+    type: 'info',
+    serviceRequestId: savedRequest.id, // Correction
+  });
+
+  await this.emailService.sendRequestConfirmation(
+    createMariageRequestDto.conjoint1.email,
+    'mariage',
+    numeroReference
+  );
+
+  return savedRequest;
+}
+  // ==================== GESTION DES TRAITEMENTS ====================
+
+ async createTreatment(createTreatmentDto: CreateTreatmentDto, agentId: string) {
+  // CORRECTION: Passer undefined au lieu de juste l'ID pour findOne
+  const demande = await this.findOne(createTreatmentDto.demandeId, undefined);
+  
+  if (!demande.canBeProcessed()) {
+    throw new BadRequestException('Cette demande ne peut pas être traitée dans son état actuel');
+  }
+
+  // Vérifier qu'il n'y a pas déjà un traitement en cours
+  const existingTreatment = demande.getCurrentTreatment();
+  if (existingTreatment) {
+    throw new BadRequestException('Cette demande a déjà un traitement en cours');
+  }
+
+  const numeroTraitement = await this.generateTreatmentNumber();
+  
+  const treatment = this.treatmentRepository.create({
+    numeroTraitement,
+    demande_id: demande.id, // CORRECTION: S'assurer que demande_id est bien défini
+    agent_id: agentId,
+    agentNom: createTreatmentDto.agentNom,
+    agentPrenom: createTreatmentDto.agentPrenom,
+    agentEmail: createTreatmentDto.agentEmail,
+    agentService: createTreatmentDto.agentService,
+    etat: TraitementEtat.EN_COURS,
+    resultat: TraitementResultat.EN_ATTENTE,
+    dateDebut: new Date(),
+    dateEcheance: createTreatmentDto.dateEcheance 
+      ? new Date(createTreatmentDto.dateEcheance)
+      : this.calculateTreatmentDeadline(demande.type),
+    commentairesInternes: createTreatmentDto.commentairesInternes,
+    messageAgent: createTreatmentDto.messageAgent,
+    notifyByEmail: createTreatmentDto.notifyByEmail || false,
+    documentsRequis: createTreatmentDto.documentsRequis || [],
+    tempsEstime: createTreatmentDto.tempsEstime,
+    // CORRECTION: Initialiser actionsLog
+    
+  });
+
+  const savedTreatment = await this.treatmentRepository.save(treatment);
+
+  // Mettre à jour l'état de la demande
+  demande.etat = DemandeEtat.EN_COURS;
+  await this.serviceRequestRepository.save(demande);
+
+  // Log de l'action
+  // savedTreatment.addActionLog(
+  //   'Traitement créé',
+  //   `${createTreatmentDto.agentPrenom} ${createTreatmentDto.agentNom}`,
+  //   { commentaires: createTreatmentDto.commentairesInternes }
+  // );
+  await this.treatmentRepository.save(savedTreatment);
+
+  // CORRECTION: Créer la notification correctement
+  await this.notificationsService.create({
+    userId: demande.utilisateur_id,
+    message: `Votre demande ${demande.numeroReference} est maintenant en cours de traitement`,
+    type: 'info',
+    serviceRequestId: demande.id,
+  });
+
+  if (createTreatmentDto.notifyByEmail && createTreatmentDto.messageAgent) {
+    await this.emailService.sendTreatmentUpdate(
+      demande.email,
+      demande.numeroReference,
+      'en_cours',
+      createTreatmentDto.messageAgent
+    );
+  }
+
+  return savedTreatment;
+}
+
+// 3. Corrections dans updateTreatment et finalizeTreatment
+async updateTreatment(treatmentId: string, updateTreatmentDto: UpdateTreatmentDto, agentId: string) {
+  const treatment = await this.treatmentRepository.findOne({
+    where: { id: treatmentId },
+    relations: ['demande', 'agent'],
+  });
+
+  if (!treatment) {
+    throw new NotFoundException('Traitement non trouvé');
+  }
+
+  // Vérifier que l'agent peut modifier ce traitement
+  if (treatment.agent_id !== agentId) {
+    throw new ForbiddenException('Vous ne pouvez pas modifier ce traitement');
+  }
+
+  // Mettre à jour les champs
+  Object.assign(treatment, updateTreatmentDto);
+
+  if (updateTreatmentDto.resultat && updateTreatmentDto.resultat !== TraitementResultat.EN_ATTENTE) {
+    treatment.etat = TraitementEtat.TERMINE;
+    treatment.dateFin = new Date();
+    treatment.tempsReel = treatment.calculateProcessingTime();
+
+    // Mettre à jour l'état de la demande selon le résultat
+    const newEtat = this.mapResultatToEtat(updateTreatmentDto.resultat);
+    treatment.demande.etat = newEtat;
+    await this.serviceRequestRepository.save(treatment.demande);
+  }
+
+  // Log de l'action
+  // treatment.addActionLog(
+  //   'Traitement mis à jour',
+  //   `${treatment.agentPrenom} ${treatment.agentNom}`,
+  //   updateTreatmentDto
+  // );
+
+  const savedTreatment = await this.treatmentRepository.save(treatment);
+
+  // CORRECTION: Notifier l'utilisateur si nécessaire
+  if (updateTreatmentDto.messageAgent) {
+    await this.notificationsService.create({
+      userId: treatment.demande.utilisateur_id,
+      message: updateTreatmentDto.messageAgent,
+      type: this.getNotificationTypeFromResultat(updateTreatmentDto.resultat),
+      serviceRequestId: treatment.demande.id,
+    });
+
+    if (updateTreatmentDto.notifyByEmail) {
+      await this.emailService.sendTreatmentUpdate(
+        treatment.demande.email,
+        treatment.demande.numeroReference,
+        updateTreatmentDto.resultat,
+        updateTreatmentDto.messageAgent
+      );
+    }
+  }
+
+  return savedTreatment;
+}
+
+async finalizeTreatment(treatmentId: string, finalData: {
+  resultat: TraitementResultat;
+  commentairesPublics?: string;
+  messageAgent?: string;
+  notifyByEmail?: boolean;
+}, agentId: string) {
+  const treatment = await this.treatmentRepository.findOne({
+    where: { id: treatmentId },
+    relations: ['demande'],
+  });
+
+  if (!treatment) {
+    throw new NotFoundException('Traitement non trouvé');
+  }
+
+  if (treatment.agent_id !== agentId) {
+    throw new ForbiddenException('Vous ne pouvez pas finaliser ce traitement');
+  }
+
+  // Finaliser le traitement
+  treatment.etat = TraitementEtat.TERMINE;
+  treatment.resultat = finalData.resultat;
+  treatment.commentairesPublics = finalData.commentairesPublics;
+  treatment.messageAgent = finalData.messageAgent;
+  treatment.notifyByEmail = finalData.notifyByEmail || false;
+  treatment.dateFin = new Date();
+  treatment.tempsReel = treatment.calculateProcessingTime();
+
+  // Mettre à jour l'état de la demande
+  const newEtat = this.mapResultatToEtat(finalData.resultat);
+  treatment.demande.etat = newEtat;
+
+  // Log final
+  // treatment.addActionLog(
+  //   'Traitement finalisé',
+  //   `${treatment.agentPrenom} ${treatment.agentNom}`,
+  //   { resultat: finalData.resultat, commentaires: finalData.commentairesPublics }
+  // );
+
+  await this.treatmentRepository.save(treatment);
+  await this.serviceRequestRepository.save(treatment.demande);
+
+  // CORRECTION: Notifications
+  const notificationType = this.getNotificationTypeFromResultat(finalData.resultat);
+  const message = finalData.messageAgent || `Votre demande ${treatment.demande.numeroReference} a été ${finalData.resultat}`;
+
+  await this.notificationsService.create({
+    userId: treatment.demande.utilisateur_id,
+    message,
+    type: notificationType,
+    serviceRequestId: treatment.demande.id,
+  });
+
+  if (finalData.notifyByEmail) {
+    await this.emailService.sendTreatmentFinal(
+      treatment.demande.email,
+      treatment.demande.numeroReference,
+      finalData.resultat,
+      message
+    );
+  }
+
+  return treatment;
+}
+
+  // ==================== MÉTHODES UTILITAIRES ====================
+
+  private async getServiceByType(type: string): Promise<Service> {
+    const service = await this.serviceRepository.findOne({
+      where: { type, isActive: true }
+    });
+
+    if (!service) {
+      throw new NotFoundException(`Service de type "${type}" non trouvé`);
+    }
+
+    return service;
+  }
+
+  private async generateReferenceNumber(prefix: string): Promise<string> {
+    const date = new Date();
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    
+    // Compter les demandes du jour pour ce type
+    const count = await this.serviceRequestRepository.count({
+      where: {
+        numeroReference: Like(`${prefix}-${year}${month}${day}-%`),
+      },
+    });
+
+    const sequence = String(count + 1).padStart(4, '0');
+    return `${prefix}-${year}${month}${day}-${sequence}`;
+  }
+
+  private async generateTreatmentNumber(): Promise<string> {
+    const date = new Date();
+    const timestamp = date.getTime().toString().slice(-8);
+    return `TRT-${timestamp}`;
+  }
+
+  private calculatePriority(type: string, data: any): string {
+    // Logique pour calculer la priorité selon le type et les données
+    switch (type) {
+      case 'rdv':
+        return data.meetingTarget === 'maire' ? 'haute' : 'normale';
+      case 'mariage':
+        const dateMarriage = new Date(data.date1);
+        const daysUntil = (dateMarriage.getTime() - Date.now()) / (1000 * 60 * 60 * 24);
+        return daysUntil <= 30 ? 'haute' : 'normale';
+      case 'partenariat':
+        return data.partnershipNature === 'urgente' ? 'haute' : 'normale';
+      default:
+        return 'normale';
+    }
+  }
+
+  private calculateProcessingDeadline(type: string): Date {
+    const now = new Date();
+    const deadlines = {
+      'rdv': 5, // 5 jours ouvrés
+      'partenariat': 15, // 15 jours ouvrés
+      'mariage': 30, // 30 jours ouvrés
+    };
+
+    const days = deadlines[type] || 10;
+    now.setDate(now.getDate() + days);
+    return now;
+  }
+
+  private calculateTreatmentDeadline(type: string): Date {
+    const now = new Date();
+    const deadlines = {
+      'rdv': 2, // 2 jours pour traiter
+      'partenariat': 10, // 10 jours pour traiter
+      'mariage': 20, // 20 jours pour traiter
+    };
+
+    const days = deadlines[type] || 5;
+    now.setDate(now.getDate() + days);
+    return now;
+  }
+
+  private mapResultatToEtat(resultat: TraitementResultat): DemandeEtat {
+    switch (resultat) {
+      case TraitementResultat.VALIDEE:
+        return DemandeEtat.VALIDEE;
+      case TraitementResultat.REFUSEE:
+        return DemandeEtat.REFUSEE;
+      case TraitementResultat.INCOMPLETE:
+      case TraitementResultat.REPORTEE:
+        return DemandeEtat.EN_ATTENTE;
+      default:
+        return DemandeEtat.EN_COURS;
+    }
+  }
+
+  private getNotificationTypeFromResultat(resultat: TraitementResultat): string {
+    switch (resultat) {
+      case TraitementResultat.VALIDEE:
+        return 'success';
+      case TraitementResultat.REFUSEE:
+        return 'error';
+      case TraitementResultat.INCOMPLETE:
+      case TraitementResultat.REPORTEE:
+        return 'warning';
+      default:
+        return 'info';
+    }
+  }
+
+  // ==================== RECHERCHE ET CONSULTATION ====================
+
+  async findAll(filters: {
+    page?: number;
+    limit?: number;
+    type?: string;
+    etat?: string;
+    priorite?: string;
+    agentId?: string;
+    dateDebut?: Date;
+    dateFin?: Date;
+  }) {
+    const { page = 1, limit = 10 } = filters;
+    
+    const queryBuilder = this.serviceRequestRepository.createQueryBuilder('request')
+      .leftJoinAndSelect('request.utilisateur', 'user')
+      .leftJoinAndSelect('request.service', 'service')
+      .leftJoinAndSelect('request.traitements', 'treatments')
+      .leftJoinAndSelect('treatments.agent', 'agent');
+
+    // Appliquer les filtres
+    if (filters.type) {
+      queryBuilder.andWhere('request.type = :type', { type: filters.type });
+    }
+
+    if (filters.etat) {
+      queryBuilder.andWhere('request.etat = :etat', { etat: filters.etat });
+    }
+
+    if (filters.priorite) {
+      queryBuilder.andWhere('request.priorite = :priorite', { priorite: filters.priorite });
+    }
+
+    if (filters.agentId) {
+      queryBuilder.andWhere('treatments.agent_id = :agentId', { agentId: filters.agentId });
+    }
+
+    if (filters.dateDebut) {
+      queryBuilder.andWhere('request.createdAt >= :dateDebut', { dateDebut: filters.dateDebut });
+    }
+
+    if (filters.dateFin) {
+      queryBuilder.andWhere('request.createdAt <= :dateFin', { dateFin: filters.dateFin });
+    }
+
+    queryBuilder.orderBy('request.createdAt', 'DESC');
+
+    const [requests, total] = await queryBuilder
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return {
+      data: requests,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  async findOne(id: string, userId?: string) {
+    const request = await this.serviceRequestRepository.findOne({
+      where: { id },
+      relations: [
+        'utilisateur',
+        'service',
+        'documents',
+        'traitements',
+        'traitements.agent',
+        'traitements.documentsGeneres',
+        'notifications'
+      ],
+    });
+
+    if (!request) {
+      throw new NotFoundException('Demande non trouvée');
+    }
+
+    // Vérifier l'accès pour les utilisateurs non-admin
+    if (userId && request.utilisateur_id !== userId) {
+      throw new ForbiddenException('Accès non autorisé à cette demande');
+    }
+
+    return request;
+  }
+
+  async findByReference(numeroReference: string, userId?: string) {
+    const request = await this.serviceRequestRepository.findOne({
+      where: { numeroReference },
+      relations: [
+        'utilisateur',
+        'service',
+        'documents',
+        'traitements',
+        'traitements.agent',
+        'traitements.documentsGeneres',
+        'notifications'
+      ],
+    });
+
+    if (!request) {
+      throw new NotFoundException('Demande non trouvée');
+    }
+
+    if (userId && request.utilisateur_id !== userId) {
+      throw new ForbiddenException('Accès non autorisé à cette demande');
+    }
+
+    return request;
+  }
+
+  async getUserRequests(userId: string, filters: {
+    page?: number;
+    limit?: number;
+    type?: string;
+    etat?: string;
+  }) {
+    const { page = 1, limit = 10 } = filters;
+    
+    const queryBuilder = this.serviceRequestRepository.createQueryBuilder('request')
+      .where('request.utilisateur_id = :userId', { userId })
+      .leftJoinAndSelect('request.service', 'service')
+      .leftJoinAndSelect('request.traitements', 'treatments')
+      .leftJoinAndSelect('treatments.agent', 'agent');
+
+    if (filters.type) {
+      queryBuilder.andWhere('request.type = :type', { type: filters.type });
+    }
+
+    if (filters.etat) {
+      queryBuilder.andWhere('request.etat = :etat', { etat: filters.etat });
+    }
+
+    queryBuilder.orderBy('request.createdAt', 'DESC');
+
+    const [requests, total] = await queryBuilder
+      .skip((page - 1) * limit)
+      .take(limit)
+      .getManyAndCount();
+
+    return {
+      data: requests,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    };
+  }
+
+  // ==================== GESTION DES DOCUMENTS ====================
+
+  // async addDocument(requestId: string, documentData: {
+  //   type: string;
+  //   nom: string;
+  //   description?: string;
+  //   url: string;
+  //   originalName: string;
+  //   mimeType: string;
+  //   size: number;
+  // }) {
+  //   const document = this.documentRepository.create({
+  //     service_request_id: requestId,
+  //     ...documentData,
+  //   });
+
+  //   const savedDocument = await this.documentRepository.save(document);
+
+  //   // Notifier que des documents ont été ajoutés
+  //   const request = await this.findOne(requestId);
+  //   await this.notificationsService.create({
+  //     userId: request.utilisateur_id,
+  //     message: `Document "${documentData.nom}" ajouté à votre demande ${request.numeroReference}`,
+  //     type: 'info',
+  //     serviceRequestId: requestId,
+  //   });
+
+  //   return savedDocument;
+  // }
+
+  // async addTreatmentDocument(treatmentId: string, documentData: {
+  //   type: string;
+  //   nom: string;
+  //   description?: string;
+  //   url: string;
+  //   originalName: string;
+  //   mimeType: string;
+  //   size: number;
+  // }) {
+  //   const treatment = await this.treatmentRepository.findOne({
+  //     where: { id: treatmentId },
+  //     relations: ['demande'],
+  //   });
+
+  //   if (!treatment) {
+  //     throw new NotFoundException('Traitement non trouvé');
+  //   }
+
+  //   const document = this.treatmentDocumentRepository.create({
+  //     treatment_id: treatmentId,
+  //     ...documentData,
+  //   });
+
+  //   const savedDocument = await this.treatmentDocumentRepository.save(document);
+
+  //   // Log de l'ajout de document
+  //   treatment.addActionLog(
+  //     'Document généré',
+  //     `${treatment.agentPrenom} ${treatment.agentNom}`,
+  //     { documentNom: documentData.nom, documentType: documentData.type }
+  //   );
+  //   await this.treatmentRepository.save(treatment);
+
+  //   // Notifier l'utilisateur
+  //   await this.notificationsService.create({
+  //     userId: treatment.demande.utilisateur_id,
+  //     message: `Un document "${documentData.nom}" a été généré pour votre demande ${treatment.demande.numeroReference}`,
+  //     type: 'document',
+  //     serviceRequestId: treatment.demande.id,
+  //   });
+
+  //   return savedDocument;
+  // }
+async addDocument(requestId: string, documentData: {
+  type: string;
+  nom: string;
+  description?: string;
+  url: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+}) {
+  const document = this.documentRepository.create({
+    service_request_id: requestId,
+    ...documentData,
+  });
+
+  const savedDocument = await this.documentRepository.save(document);
+
+  // CORRECTION: Notifier que des documents ont été ajoutés
+  const request = await this.findOne(requestId, undefined);
+  await this.notificationsService.create({
+    userId: request.utilisateur_id,
+    message: `Document "${documentData.nom}" ajouté à votre demande ${request.numeroReference}`,
+    type: 'info',
+    serviceRequestId: requestId,
+  });
+
+  return savedDocument;
+}
+
+async addTreatmentDocument(treatmentId: string, documentData: {
+  type: string;
+  nom: string;
+  description?: string;
+  url: string;
+  originalName: string;
+  mimeType: string;
+  size: number;
+}) {
+  const treatment = await this.treatmentRepository.findOne({
+    where: { id: treatmentId },
+    relations: ['demande'],
+  });
+
+  if (!treatment) {
+    throw new NotFoundException('Traitement non trouvé');
+  }
+
+  const document = this.treatmentDocumentRepository.create({
+    treatment_id: treatmentId,
+    ...documentData,
+  });
+
+  const savedDocument = await this.treatmentDocumentRepository.save(document);
+
+  // Log de l'ajout de document
+  // treatment.addActionLog(
+  //   'Document généré',
+  //   `${treatment.agentPrenom} ${treatment.agentNom}`,
+  //   { documentNom: documentData.nom, documentType: documentData.type }
+  // );
+  await this.treatmentRepository.save(treatment);
+
+  // CORRECTION: Notifier l'utilisateur
+  await this.notificationsService.create({
+    userId: treatment.demande.utilisateur_id,
+    message: `Un document "${documentData.nom}" a été généré pour votre demande ${treatment.demande.numeroReference}`,
+    type: 'document',
+    serviceRequestId: treatment.demande.id,
+  });
+
+  return savedDocument;
+}
+  // ==================== STATISTIQUES ET RAPPORTS ====================
+
+  async getStatistics(filters?: {
+    dateDebut?: Date;
+    dateFin?: Date;
+    type?: string;
+    agentId?: string;
+  }) {
+    const queryBuilder = this.serviceRequestRepository.createQueryBuilder('request');
+
+    if (filters?.dateDebut) {
+      queryBuilder.andWhere('request.createdAt >= :dateDebut', { dateDebut: filters.dateDebut });
+    }
+
+    if (filters?.dateFin) {
+      queryBuilder.andWhere('request.createdAt <= :dateFin', { dateFin: filters.dateFin });
+    }
+
+    if (filters?.type) {
+      queryBuilder.andWhere('request.type = :type', { type: filters.type });
+    }
+
+    // Statistiques générales
+    const total = await queryBuilder.getCount();
+    
+    const parEtat = await queryBuilder
+      .select('request.etat', 'etat')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('request.etat')
+      .getRawMany();
+
+    const parType = await queryBuilder
+      .select('request.type', 'type')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('request.type')
+      .getRawMany();
+
+    const parPriorite = await queryBuilder
+      .select('request.priorite', 'priorite')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('request.priorite')
+      .getRawMany();
+
+    // Statistiques des traitements
+    const treatmentQuery = this.treatmentRepository.createQueryBuilder('treatment')
+      .leftJoin('treatment.demande', 'request');
+
+    if (filters?.dateDebut) {
+      treatmentQuery.andWhere('treatment.createdAt >= :dateDebut', { dateDebut: filters.dateDebut });
+    }
+
+    if (filters?.dateFin) {
+      treatmentQuery.andWhere('treatment.createdAt <= :dateFin', { dateFin: filters.dateFin });
+    }
+
+    if (filters?.agentId) {
+      treatmentQuery.andWhere('treatment.agent_id = :agentId', { agentId: filters.agentId });
+    }
+
+    const tempsTraitementMoyen = await treatmentQuery
+      .select('AVG(treatment.tempsReel)', 'moyenne')
+      .where('treatment.tempsReel IS NOT NULL')
+      .getRawOne();
+
+    const traitementParResultat = await treatmentQuery
+      .select('treatment.resultat', 'resultat')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('treatment.resultat')
+      .getRawMany();
+
+    const demandesEnRetard = await this.serviceRequestRepository
+      .createQueryBuilder('request')
+      .where('request.dateLimiteTraitement < :now', { now: new Date() })
+      .andWhere('request.etat IN (:...etats)', { etats: [DemandeEtat.EN_ATTENTE, DemandeEtat.EN_COURS] })
+      .getCount();
+
+    return {
+      general: {
+        total,
+        parEtat: parEtat.map(item => ({ etat: item.etat, count: parseInt(item.count) })),
+        parType: parType.map(item => ({ type: item.type, count: parseInt(item.count) })),
+        parPriorite: parPriorite.map(item => ({ priorite: item.priorite, count: parseInt(item.count) })),
+        demandesEnRetard,
+      },
+      traitements: {
+        tempsTraitementMoyen: parseFloat(tempsTraitementMoyen?.moyenne || '0'),
+        parResultat: traitementParResultat.map(item => ({ 
+          resultat: item.resultat, 
+          count: parseInt(item.count) 
+        })),
+      },
+    };
+  }
+
+  async getAgentWorkload(agentId: string) {
+    const traitementsEnCours = await this.treatmentRepository.count({
+      where: {
+        agent_id: agentId,
+        etat: TraitementEtat.EN_COURS,
+      },
+    });
+
+    const traitementsEnRetard = await this.treatmentRepository
+      .createQueryBuilder('treatment')
+      .where('treatment.agent_id = :agentId', { agentId })
+      .andWhere('treatment.dateEcheance < :now', { now: new Date() })
+      .andWhere('treatment.etat = :etat', { etat: TraitementEtat.EN_COURS })
+      .getCount();
+
+    const derniersMois = await this.treatmentRepository
+      .createQueryBuilder('treatment')
+      .where('treatment.agent_id = :agentId', { agentId })
+      .andWhere('treatment.createdAt >= :dateDebut', { 
+        dateDebut: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) 
+      })
+      .select('treatment.resultat', 'resultat')
+      .addSelect('COUNT(*)', 'count')
+      .groupBy('treatment.resultat')
+      .getRawMany();
+
+    const tempsTraitementMoyen = await this.treatmentRepository
+      .createQueryBuilder('treatment')
+      .where('treatment.agent_id = :agentId', { agentId })
+      .andWhere('treatment.tempsReel IS NOT NULL')
+      .select('AVG(treatment.tempsReel)', 'moyenne')
+      .getRawOne();
+
+    return {
+      traitementsEnCours,
+      traitementsEnRetard,
+      derniersMois: derniersMois.map(item => ({ 
+        resultat: item.resultat, 
+        count: parseInt(item.count) 
+      })),
+      tempsTraitementMoyen: parseFloat(tempsTraitementMoyen?.moyenne || '0'),
+    };
+  }
+}
+
+
+import { 
+  Controller, 
+  Get, 
+  Post, 
+  Body, 
+  Patch, 
+  Param, 
+  Query, 
+  UseGuards, 
+  Request,
+  UseInterceptors,
+  UploadedFiles,
+  ParseUUIDPipe,
+  BadRequestException
+} from '@nestjs/common';
+import { FilesInterceptor } from '@nestjs/platform-express';
+import { 
+  ApiTags, 
+  ApiOperation, 
+  ApiResponse, 
+  ApiBearerAuth, 
+  ApiQuery, 
+  ApiConsumes 
+} from '@nestjs/swagger';
+import { ServiceRequestsService } from './service-requests.service';
+
+import { CreateTreatmentDto } from './dto/create-treatment.dto';
+import { UpdateTreatmentDto } from './dto/update-treatment.dto';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AdminGuard } from '../auth/guards/admin.guard';
+import { CreateRdvRequestDto } from './dto/create-rdv-request.dto';
+import { CreatePartenariatRequestDto } from './dto/create-partnariat-request.dto';
+import { CreateMariageRequestDto } from './dto/create-mariage-request.dto';
+import { AgentGuard } from '../auth/guards/agent.guard';
+
+
+@ApiTags('Service Requests')
+@Controller('service-requests')
+export class ServiceRequestsController {
+  constructor(private readonly serviceRequestsService: ServiceRequestsService) {}
+
+  // ==================== CRÉATION DES DEMANDES ====================
+
+  @Post('rdv')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Créer une demande de rendez-vous' })
+  @ApiResponse({ status: 201, description: 'Demande créée avec succès' })
+  createRdvRequest(@Body() createRdvRequestDto: CreateRdvRequestDto, @Request() req) {
+    return this.serviceRequestsService.createRdvRequest(createRdvRequestDto, req.user.id);
+  }
+
+  @Post('partenariat')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Créer une demande de partenariat' })
+  @ApiResponse({ status: 201, description: 'Demande créée avec succès' })
+  createPartenariatRequest(@Body() createPartenariatRequestDto: CreatePartenariatRequestDto, @Request() req) {
+    return this.serviceRequestsService.createPartenariatRequest(createPartenariatRequestDto, req.user.id);
+  }
+
+  @Post('mariage')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Créer une demande de mariage' })
+  @ApiResponse({ status: 201, description: 'Demande créée avec succès' })
+  createMariageRequest(@Body() createMariageRequestDto: CreateMariageRequestDto, @Request() req) {
+    return this.serviceRequestsService.createMariageRequest(createMariageRequestDto, req.user.id);
+  }
+
+  // ==================== CONSULTATION DES DEMANDES ====================
+
+  @Get()
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Lister toutes les demandes (Admin)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'type', required: false })
+  @ApiQuery({ name: 'etat', required: false })
+  @ApiQuery({ name: 'priorite', required: false })
+  @ApiQuery({ name: 'agentId', required: false })
+  findAll(@Query() filters: any) {
+    return this.serviceRequestsService.findAll(filters);
+  }
+
+  @Get('my-requests')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Lister mes demandes' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  @ApiQuery({ name: 'type', required: false })
+  @ApiQuery({ name: 'etat', required: false })
+  getUserRequests(@Query() filters: any, @Request() req) {
+    return this.serviceRequestsService.getUserRequests(req.user.id, filters);
+  }
+
+  @Get('reference/:reference')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Obtenir une demande par son numéro de référence' })
+  findByReference(@Param('reference') reference: string, @Request() req) {
+    const userId = req.user.role === 'admin' || req.user.role === 'agent' ? undefined : req.user.id;
+    return this.serviceRequestsService.findByReference(reference, userId);
+  }
+
+  @Get('statistics')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Obtenir les statistiques des demandes' })
+  @ApiQuery({ name: 'dateDebut', required: false })
+  @ApiQuery({ name: 'dateFin', required: false })
+  @ApiQuery({ name: 'type', required: false })
+  @ApiQuery({ name: 'agentId', required: false })
+  getStatistics(@Query() filters: any) {
+    return this.serviceRequestsService.getStatistics(filters);
+  }
+
+  @Get('agent-workload/:agentId')
+  @UseGuards(JwtAuthGuard, AdminGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Obtenir la charge de travail d\'un agent' })
+  getAgentWorkload(@Param('agentId', ParseUUIDPipe) agentId: string) {
+    return this.serviceRequestsService.getAgentWorkload(agentId);
+  }
+
+  @Get(':id')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Obtenir une demande par ID' })
+  findOne(@Param('id', ParseUUIDPipe) id: string, @Request() req) {
+    const userId = req.user.role === 'admin' || req.user.role === 'agent' ? undefined : req.user.id;
+    return this.serviceRequestsService.findOne(id, userId);
+  }
+
+  // ==================== GESTION DES TRAITEMENTS ====================
+
+  @Post('treatments')
+  @UseGuards(JwtAuthGuard, AgentGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Créer un traitement (Agent/Admin)' })
+  @ApiResponse({ status: 201, description: 'Traitement créé avec succès' })
+  createTreatment(@Body() createTreatmentDto: CreateTreatmentDto, @Request() req) {
+    return this.serviceRequestsService.createTreatment(createTreatmentDto, req.user.id);
+  }
+
+  @Patch('treatments/:id')
+  @UseGuards(JwtAuthGuard, AgentGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Mettre à jour un traitement' })
+  updateTreatment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() updateTreatmentDto: UpdateTreatmentDto,
+    @Request() req
+  ) {
+    return this.serviceRequestsService.updateTreatment(id, updateTreatmentDto, req.user.id);
+  }
+
+  @Post('treatments/:id/finalize')
+  @UseGuards(JwtAuthGuard, AgentGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Finaliser un traitement' })
+  finalizeTreatment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() finalData: any,
+    @Request() req
+  ) {
+    return this.serviceRequestsService.finalizeTreatment(id, finalData, req.user.id);
+  }
+
+  // ==================== GESTION DES DOCUMENTS ====================
+
+  @Post(':id/documents')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @UseInterceptors(FilesInterceptor('files', 10, {
+    limits: { fileSize: 10 * 1024 * 1024 }, // 10MB
+    fileFilter: (req, file, cb) => {
+      const allowedTypes = [
+        'application/pdf',
+        'image/jpeg',
+        'image/png',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+      ];
+      
+      if (allowedTypes.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new BadRequestException('Type de fichier non autorisé'), false);
+      }
+    },
+  }))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Ajouter des documents à une demande' })
+  async addDocuments(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFiles() files: Express.Multer.File[],
+    @Body() body: { type: string; description?: string }
+  ) {
+    if (!files || files.length === 0) {
+      throw new BadRequestException('Aucun fichier fourni');
+    }
+
+    const uploadedDocs = [];
+    
+    for (const file of files) {
+      // Ici, vous devriez utiliser votre service d'upload existant
+      // pour sauvegarder le fichier et obtenir l'URL
+      const documentData = {
+        type: body.type,
+        nom: file.originalname,
+        description: body.description,
+        url: `uploads/documents/${Date.now()}-${file.originalname}`,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size,
+      };
+
+      const doc = await this.serviceRequestsService.addDocument(id, documentData);
+      uploadedDocs.push(doc);
+    }
+
+    return { 
+      message: 'Documents ajoutés avec succès', 
+      documents: uploadedDocs 
+    };
+  }
+
+  @Post('treatments/:id/documents')
+  @UseGuards(JwtAuthGuard, AgentGuard)
+  @ApiBearerAuth()
+  @UseInterceptors(FilesInterceptor('files', 10))
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Ajouter des documents générés par l\'agent' })
+  async addTreatmentDocuments(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFiles() files: Express.Multer.File[],
+    @Body() body: { type: string; description?: string }
+  ) {
+    if (!files || files.length === 0) {
+      throw new BadRequestException('Aucun fichier fourni');
+    }
+
+    const uploadedDocs = [];
+    
+    for (const file of files) {
+      const documentData = {
+        type: body.type,
+        nom: file.originalname,
+        description: body.description,
+        url: `uploads/treatment-documents/${Date.now()}-${file.originalname}`,
+        originalName: file.originalname,
+        mimeType: file.mimetype,
+        size: file.size,
+      };
+
+      const doc = await this.serviceRequestsService.addTreatmentDocument(id, documentData);
+      uploadedDocs.push(doc);
+    }
+
+    return { 
+      message: 'Documents générés ajoutés avec succès', 
+      documents: uploadedDocs 
+    };
+  }
+}
+
+
+
+[2025-08-19 13:11:21] INFO  [v4JMdAw7NE] Connection closed
+[Nest] 43328  - 08/19/2025, 2:14:04 PM   ERROR [ExceptionsHandler] QueryFailedError: Column 'demande_id' cannot be null
+    at Query.onResult (/home/nikki/mairie-plateau-api/node_modules/typeorm/driver/src/driver/mysql/MysqlQueryRunner.ts:247:33)
+    at Query.execute (/home/nikki/mairie-plateau-api/node_modules/mysql2/lib/commands/command.js:36:14)
+    at PoolConnection.handlePacket (/home/nikki/mairie-plateau-api/node_modules/mysql2/lib/base/connection.js:475:34)
+    at PacketParser.onPacket (/home/nikki/mairie-plateau-api/node_modules/mysql2/lib/base/connection.js:93:12)
+    at PacketParser.executeStart (/home/nikki/mairie-plateau-api/node_modules/mysql2/lib/packet_parser.js:75:16)
+    at Socket.<anonymous> (/home/nikki/mairie-plateau-api/node_modules/mysql2/lib/base/connection.js:100:25)
+    at Socket.emit (node:events:518:28)
+    at addChunk (node:internal/streams/readable:561:12)
+    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+    at Readable.push (node:internal/streams/readable:392:5) {
+  query: 'UPDATE `treatments` SET `demande_id` = ?, `updatedAt` = CURRENT_TIMESTAMP WHERE `id` = ?',
+  parameters: [
+    undefined,
+    'cf53d84b-5e2a-4f58-9f35-52b2bd030da4'
+  ],
+  driverError: Error: Column 'demande_id' cannot be null
+      at Packet.asError (/home/nikki/mairie-plateau-api/node_modules/mysql2/lib/packets/packet.js:740:17)
+      at Query.execute (/home/nikki/mairie-plateau-api/node_modules/mysql2/lib/commands/command.js:29:26)
+      at PoolConnection.handlePacket (/home/nikki/mairie-plateau-api/node_modules/mysql2/lib/base/connection.js:475:34)
+      at PacketParser.onPacket (/home/nikki/mairie-plateau-api/node_modules/mysql2/lib/base/connection.js:93:12)
+      at PacketParser.executeStart (/home/nikki/mairie-plateau-api/node_modules/mysql2/lib/packet_parser.js:75:16)
+      at Socket.<anonymous> (/home/nikki/mairie-plateau-api/node_modules/mysql2/lib/base/connection.js:100:25)
+      at Socket.emit (node:events:518:28)
+      at addChunk (node:internal/streams/readable:561:12)
+      at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)
+      at Readable.push (node:internal/streams/readable:392:5) {
+    code: 'ER_BAD_NULL_ERROR',
+    errno: 1048,
+    sqlState: '23000',
+    sqlMessage: "Column 'demande_id' cannot be null",
+    sql: "UPDATE `treatments` SET `demande_id` = NULL, `updatedAt` = CURRENT_TIMESTAMP WHERE `id` = 'cf53d84b-5e2a-4f58-9f35-52b2bd030da4'"
+  },
+  code: 'ER_BAD_NULL_ERROR',
+  errno: 1048,
+  sqlState: '23000',
+  sqlMessage: "Column 'demande_id' cannot be null",
+  sql: "UPDATE `treatments` SET `demande_id` = NULL, `updatedAt` = CURRENT_TIMESTAMP WHERE `id` = 'cf53d84b-5e2a-4f58-9f35-52b2bd030da4'"
+}
