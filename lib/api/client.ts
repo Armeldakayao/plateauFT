@@ -241,7 +241,7 @@ import type {
 } from "../types/api";
 import { ServiceRequestDocument } from "../types/service-request";
 
-const API_BASE_URL = "http://195.110.59.105" ;
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000";
 
 export const getImageUrl = (imagePath: string) => {
   if (!imagePath) return "";
